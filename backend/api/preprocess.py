@@ -3,9 +3,21 @@ import pandas as pd
 from tempfile import NamedTemporaryFile
 import os
 import logging
+import numpy as np
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+def sanitize_json(obj):
+    if isinstance(obj, dict):
+        return {k: sanitize_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_json(x) for x in obj]
+    elif isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+        return obj
+    return obj
 
 @router.post("/preprocess/")
 async def preprocess_csv(file: UploadFile = File(...)):
@@ -35,8 +47,8 @@ async def preprocess_csv(file: UploadFile = File(...)):
         os.unlink(temp_file.name)
 
         return {
-            "preview": preview_data,
-            "summary": summary
+            "preview": sanitize_json(preview_data),
+            "summary": sanitize_json(summary)
         }
         
     except Exception as e:

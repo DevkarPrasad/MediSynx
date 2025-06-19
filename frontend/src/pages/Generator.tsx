@@ -13,12 +13,6 @@ export default function Generator() {
   const [genPath, setGenPath] = useState("");
   const [evaluation, setEvaluation] = useState<any>(null);
 
-  // Helper to get token
-  const getAuthHeader = () => {
-    const token = localStorage.getItem("token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  };
-
   // Handle file upload and preprocess
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0] || null;
@@ -34,14 +28,14 @@ export default function Generator() {
     toast.loading("Uploading & preprocessing...");
     try {
       const res = await axios.post("/preprocess/", formData, {
-        headers: { ...getAuthHeader(), "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": "multipart/form-data" },
       });
-      // Assume backend returns { preview: [...], summary: ... }
       setPreview(res.data.preview || []);
       setSummary(res.data.summary || null);
       toast.success("Preprocessing done!");
     } catch (e: any) {
-      toast.error("Preprocess failed: " + (e.response?.data?.detail || e.message));
+      if (e.response?.status === 401) toast.error("Unauthorized. Please log in again.");
+      else toast.error("Preprocess failed: " + (e.response?.data?.detail || e.message));
     } finally {
       setLoading(false);
       toast.dismiss();
@@ -58,12 +52,13 @@ export default function Generator() {
     toast.loading("Generating synthetic data...");
     try {
       const res = await axios.post("/generate/", formData, {
-        headers: { ...getAuthHeader(), "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": "multipart/form-data" },
       });
       setGenPath(res.data.path);
-      toast.success("Generation complete!");
+      toast.success("Synthetic data generated!");
     } catch (e: any) {
-      toast.error("Generation failed: " + (e.response?.data?.detail || e.message));
+      if (e.response?.status === 401) toast.error("Unauthorized. Please log in again.");
+      else toast.error("Generation failed: " + (e.response?.data?.detail || e.message));
     } finally {
       setLoading(false);
       toast.dismiss();
@@ -76,19 +71,18 @@ export default function Generator() {
     setLoading(true);
     toast.loading("Evaluating...");
     try {
-      // Download synthetic file as blob
-      const synBlob = await fetch(`http://localhost:8000/download/?path=${encodeURIComponent(genPath)}`)
-        .then(r => r.blob());
+      const synBlob = await fetch(`http://localhost:8000/download/?path=${encodeURIComponent(genPath)}`).then(r => r.blob());
       const formData = new FormData();
       formData.append("real", file);
       formData.append("synthetic", new File([synBlob], "synthetic.csv"));
       const res = await axios.post("/evaluate/", formData, {
-        headers: { ...getAuthHeader(), "Content-Type": "multipart/form-data" },
+        headers: { "Content-Type": "multipart/form-data" },
       });
-      setEvaluation(res.data);
+      setEvaluation(res.data.mse);
       toast.success("Evaluation complete!");
     } catch (e: any) {
-      toast.error("Evaluation failed: " + (e.response?.data?.detail || e.message));
+      if (e.response?.status === 401) toast.error("Unauthorized. Please log in again.");
+      else toast.error("Evaluation failed: " + (e.response?.data?.detail || e.message));
     } finally {
       setLoading(false);
       toast.dismiss();
@@ -104,7 +98,6 @@ export default function Generator() {
   return (
     <div className="max-w-3xl mx-auto p-6 space-y-8">
       <h1 className="text-2xl font-bold mb-4">🧠 Synthetic Data Generator</h1>
-      {/* Upload */}
       <div className="flex flex-col sm:flex-row items-center gap-4">
         <input
           type="file"
@@ -132,7 +125,6 @@ export default function Generator() {
         </button>
       </div>
 
-      {/* Preview Table */}
       {preview.length > 0 && (
         <div className="overflow-x-auto border rounded bg-white shadow p-4">
           <h2 className="font-semibold mb-2">CSV Preview</h2>
@@ -157,7 +149,6 @@ export default function Generator() {
         </div>
       )}
 
-      {/* Summary */}
       {summary && (
         <div className="bg-gray-100 p-4 rounded shadow">
           <h2 className="font-semibold mb-2">Preprocessing Summary</h2>
@@ -165,8 +156,14 @@ export default function Generator() {
         </div>
       )}
 
-      {/* Evaluate & Download */}
       <div className="flex gap-4">
+        <button
+          onClick={handleGenerate}
+          className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+          disabled={loading || !file}
+        >
+          {loading ? "Processing..." : "Generate"}
+        </button>
         <button
           onClick={handleEvaluate}
           className="bg-yellow-500 text-white px-4 py-2 rounded hover:bg-yellow-600 disabled:opacity-50"
@@ -183,7 +180,6 @@ export default function Generator() {
         </button>
       </div>
 
-      {/* Evaluation Results */}
       {evaluation && (
         <div className="bg-white p-4 rounded shadow">
           <h2 className="font-semibold mb-2">Evaluation Results</h2>
