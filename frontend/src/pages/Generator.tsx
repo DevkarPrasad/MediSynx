@@ -78,7 +78,7 @@ export default function Generator() {
       const res = await axios.post("/evaluate/", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      setEvaluation(res.data.mse);
+      setEvaluation(res.data);
       toast.success("Evaluation complete!");
     } catch (e: any) {
       if (e.response?.status === 401) toast.error("Unauthorized. Please log in again.");
@@ -181,9 +181,13 @@ export default function Generator() {
       </div>
 
       {evaluation && (
-        <div className="bg-white p-4 rounded shadow">
-          <h2 className="font-semibold mb-2">Evaluation Results</h2>
-          <pre className="text-xs overflow-x-auto">{JSON.stringify(evaluation, null, 2)}</pre>
+        <div className="bg-glass p-6 mt-6 rounded shadow">
+          <h2 className="text-xl font-bold mb-4">Evaluation Metrics</h2>
+          {Object.entries(evaluation).map(([key, value]) => (
+            <p key={key} className="text-sm text-muted-foreground">
+              {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}: {value ?? 'N/A'}
+            </p>
+          ))}
         </div>
       )}
     </div>
