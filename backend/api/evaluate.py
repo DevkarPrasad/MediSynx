@@ -1,13 +1,15 @@
-from fastapi import APIRouter, UploadFile, File
+from fastapi import APIRouter, UploadFile, File, HTTPException
 import pandas as pd
 from tempfile import NamedTemporaryFile
 import os
 import numpy as np
+import logging
 from scipy.spatial.distance import cdist
 from sklearn.preprocessing import MinMaxScaler
-from scipy.stats import ks_2samp
+from scipy.stats import ks_2samp, wasserstein_distance
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 def sanitize_json(obj):
     if isinstance(obj, dict):
@@ -35,19 +37,24 @@ def evaluate_synthetic_data(real_df, synthetic_df):
 
     def data_mismatch():
         try:
-            mismatch = sum(real_df.dtypes != synthetic_df.dtypes)
-            return float(mismatch / len(real_df.columns))
-        except Exception:
-            return None
+            mismatch_count = sum(real_df.dtypes != synthetic_df.dtypes)
+            score = float(mismatch_count / len(real_df.columns))
+            return max(0.0, min(1.0, score))
+        except Exception as e:
+            logger.warning(f"Metric 'data_mismatch' failed: {e}. Returning 0.0.")
+            return 0.0
 
     def common_rows_proportion():
         try:
             common_cols = [col for col in real_df.columns if col in synthetic_df.columns]
-            if not common_cols: return 0.0
+            if not common_cols or len(real_df) == 0:
+                return 0.0
             common = pd.merge(real_df[common_cols], synthetic_df[common_cols], on=common_cols)
-            return float(len(common) / len(real_df)) if len(real_df) > 0 else 0.0
-        except Exception:
-            return None
+            score = float(len(common) / len(real_df))
+            return max(0.0, min(1.0, score))
+        except Exception as e:
+            logger.warning(f"Metric 'common_rows_proportion' failed: {e}. Returning 0.0.")
+            return 0.0
 
     min_dists_rs, min_dists_sr, mean_dist_rr = None, None, None
     if not real_num.empty and not synth_num.empty:
@@ -61,50 +68,67 @@ def evaluate_synthetic_data(real_df, synthetic_df):
             dists_rr = cdist(real_num, real_num)
             np.fill_diagonal(dists_rr, np.inf)
             mean_dist_rr = np.mean(np.min(dists_rr, axis=1))
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Distance calculation failed: {e}. Some metrics may default to 0.0.")
 
     def nearest_syn_neighbor_distance():
         try:
-            if min_dists_rs is None: return None
+            if min_dists_rs is None: return 0.0
             scaler = MinMaxScaler()
             scaled_distances = scaler.fit_transform(min_dists_rs.reshape(-1, 1))
-            return float(np.mean(scaled_distances))
-        except Exception:
-            return None
+            score = float(np.mean(scaled_distances))
+            return max(0.0, min(1.0, score))
+        except Exception as e:
+            logger.warning(f"Metric 'nearest_syn_neighbor_distance' failed: {e}. Returning 0.0.")
+            return 0.0
 
     def close_values_probability():
         try:
-            if min_dists_sr is None or mean_dist_rr is None: return None
+            if min_dists_sr is None or mean_dist_rr is None or len(synth_num) == 0:
+                return 0.0
             threshold = 0.1 * mean_dist_rr
             close_count = np.sum(min_dists_sr < threshold)
-            return float(close_count / len(synth_num)) if len(synth_num) > 0 else 0.0
-        except Exception:
-            return None
+            score = float(close_count / len(synth_num))
+            return max(0.0, min(1.0, score))
+        except Exception as e:
+            logger.warning(f"Metric 'close_values_probability' failed: {e}. Returning 0.0.")
+            return 0.0
 
     def distant_values_probability():
         try:
-            if min_dists_sr is None or mean_dist_rr is None: return None
+            if min_dists_sr is None or mean_dist_rr is None or len(synth_num) == 0:
+                return 0.0
             threshold = 2 * mean_dist_rr
             distant_count = np.sum(min_dists_sr > threshold)
-            return float(distant_count / len(synth_num)) if len(synth_num) > 0 else 0.0
-        except Exception:
-            return None
+            score = float(distant_count / len(synth_num))
+            return max(0.0, min(1.0, score))
+        except Exception as e:
+            logger.warning(f"Metric 'distant_values_probability' failed: {e}. Returning 0.0.")
+            return 0.0
             
     def feature_distribution_similarity():
         try:
-            p_values = []
+            distances = []
             for col in real_num.columns:
                 if col in synth_num.columns:
                     real_col, synth_col = real_df[col].dropna(), synthetic_df[col].dropna()
                     if len(real_col) > 1 and len(synth_col) > 1:
-                        _, p_val = ks_2samp(real_col, synth_col)
-                        p_values.append(p_val)
-            return 1.0 - float(np.mean(p_values)) if p_values else None
-        except Exception:
-            return None
+                        scaler = MinMaxScaler()
+                        all_data = pd.concat([real_col, synth_col]).to_numpy().reshape(-1, 1)
+                        scaler.fit(all_data)
+                        norm_real = scaler.transform(real_col.to_numpy().reshape(-1, 1)).flatten()
+                        norm_synth = scaler.transform(synth_col.to_numpy().reshape(-1, 1)).flatten()
+                        distances.append(wasserstein_distance(norm_real, norm_synth))
+            
+            if not distances: return 0.0
+            avg_dist = np.mean(distances)
+            score = 1 / (1 + avg_dist)
+            return max(0.0, min(1.0, score))
+        except Exception as e:
+            logger.warning(f"Metric 'feature_distribution_similarity' failed: {e}. Returning 0.0.")
+            return 0.0
 
-    raw_metrics = {
+    return {
         "data_mismatch": data_mismatch(),
         "common_rows_proportion": common_rows_proportion(),
         "nearest_syn_neighbor_distance": nearest_syn_neighbor_distance(),
@@ -112,13 +136,6 @@ def evaluate_synthetic_data(real_df, synthetic_df):
         "distant_values_probability": distant_values_probability(),
         "feature_distribution_similarity": feature_distribution_similarity(),
     }
-
-    metrics = {}
-    for k, v in raw_metrics.items():
-        if v is None: metrics[k] = None
-        else: metrics[k] = float(v) if not (np.isnan(v) or np.isinf(v)) else None
-            
-    return metrics
 
 @router.post("/evaluate/")
 async def evaluate(real: UploadFile = File(...), synthetic: UploadFile = File(...)):
@@ -136,6 +153,8 @@ async def evaluate(real: UploadFile = File(...), synthetic: UploadFile = File(..
         df_real = pd.read_csv(temp_real.name)
         df_synth = pd.read_csv(temp_synth.name)
         results = evaluate_synthetic_data(df_real, df_synth)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Evaluation failed during file processing: {e}")
     finally:
         os.unlink(temp_real.name)
         os.unlink(temp_synth.name)
