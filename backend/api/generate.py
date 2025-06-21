@@ -5,6 +5,7 @@ import os
 import logging
 from synthcity.plugins import Plugins
 import time
+import uuid
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -131,13 +132,17 @@ async def generate(file: UploadFile = File(...), model_name: str = Form(...)):
         t5 = time.time()
         logger.info(f"Synthetic data generation took {t5 - t4:.2f} seconds.")
 
-        # Save synthetic data
-        output_path = temp_file.name.replace(".csv", "_synthetic.csv")
+        # Save synthetic data to a dedicated outputs folder
+        output_dir = "backend/outputs"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        filename = f"{uuid.uuid4()}_{model_name}_synthetic.csv"
+        output_path = os.path.join(output_dir, filename)
         synthetic_data_df.to_csv(output_path, index=False)
         
         logger.info(f"Synthetic data saved to: {output_path}")
 
-        return {"message": "Generated!", "path": output_path}
+        return {"message": "Generated!", "path": filename}
         
     except HTTPException:
         # Re-raise HTTP exceptions as-is
