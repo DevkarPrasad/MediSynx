@@ -2,8 +2,6 @@
 
 MeddiiSynx is a full-stack web application designed for generating high-fidelity synthetic healthcare data. It provides a user-friendly interface to upload real patient data, select from advanced generative models (like DP-GAN and CT-GAN), and produce privacy-preserving synthetic datasets. The platform includes a suite of evaluation metrics to assess the quality and privacy of the generated data.
 
-![Screenshot of MeddiiSynx](./frontend/public/images/synthhealth-reference.jpg)
-
 ## Features
 
 - **Modern UI**: A sleek, responsive interface built with Next.js, TypeScript, and Tailwind CSS.
